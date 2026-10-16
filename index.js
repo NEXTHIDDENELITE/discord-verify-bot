@@ -5,54 +5,11 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Store user access tokens in memory (Database is recommended for production)
-const userTokens = new Map();
-
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
+// Discord Bot Instance
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.on('ready', () => {
     console.log(`Bot logged in as ${client.user.tag}`);
-    
-    // Background task to check revoked authorizations every 5 minutes
-    setInterval(async () => {
-        for (const [userId, tokenData] of userTokens.entries()) {
-            try {
-                // Test if token is still valid
-                await axios.get('https://discord.com/api/users/@me', {
-                    headers: { Authorization: `Bearer ${tokenData.access_token}` }
-                });
-            } catch (err) {
-                if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-                    // Token revoked / User deauthorized
-                    console.log(`User ${userId} deauthorized app. Removing role...`);
-                    
-                    try {
-                        const guild = await client.guilds.fetch(process.env.GUILD_ID);
-                        const member = await guild.members.fetch(userId);
-                        if (member) {
-                            await member.roles.remove(process.env.VERIFIED_ROLE_ID);
-                            
-                            // Send log to #bot-logs
-                            if (process.env.WEBHOOK_URL) {
-                                await axios.post(process.env.WEBHOOK_URL, {
-                                    embeds: [{
-                                        title: "⚠️ Role Revoked (Deauthorized)",
-                                        color: 15158332,
-                                        description: `User <@${userId}> deauthorized the app settings. Verified role was removed automatically!`,
-                                        timestamp: new Date()
-                                    }]
-                                }).catch(() => {});
-                            }
-                        }
-                    } catch (e) {
-                        console.error(`Failed to remove role for ${userId}:`, e.message);
-                    }
-                    
-                    userTokens.delete(userId);
-                }
-            }
-        }
-    }, 5 * 60 * 1000); // Check every 5 minutes
 });
 
 if (process.env.BOT_TOKEN) {
@@ -96,9 +53,6 @@ app.get('/callback', async (req, res) => {
             ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png` 
             : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
-        // Save token for deauthorization tracking
-        userTokens.set(userData.id, { access_token: accessToken });
-
         // Step 3: Add Role to User
         await axios.put(
             `https://discord.com/api/guilds/${process.env.GUILD_ID}/members/${userData.id}/roles/${process.env.VERIFIED_ROLE_ID}`,
@@ -106,7 +60,7 @@ app.get('/callback', async (req, res) => {
             { headers: { Authorization: `Bot ${process.env.BOT_TOKEN}` } }
         );
 
-        // Step 4: Webhook Logging to #bot-logs
+        // Step 4: Private Webhook Logging to #bot-logs
         if (process.env.WEBHOOK_URL) {
             await axios.post(process.env.WEBHOOK_URL, {
                 embeds: [{
@@ -124,7 +78,7 @@ app.get('/callback', async (req, res) => {
             }).catch(() => {});
         }
 
-        // Step 5: Render UI Page
+        // Step 5: Premium Website UI Response
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -145,7 +99,7 @@ app.get('/callback', async (req, res) => {
                     .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #38bdf8, #818cf8, #34d399); }
                     .avatar-wrapper { position: relative; display: inline-block; margin-bottom: 20px; }
                     .avatar { width: 110px; height: 110px; border-radius: 50%; border: 4px solid #38bdf8; box-shadow: 0 0 25px rgba(56, 189, 248, 0.3); object-fit: cover; }
-                    .badge-icon { position: absolute; bottom: 4px; right: 4px; background: #34d399; color: #0f172a; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: justify-content; font-weight: bold; border: 3px solid #1e293b; display: flex; align-items: center; justify-content: center; }
+                    .badge-icon { position: absolute; bottom: 4px; right: 4px; background: #34d399; color: #0f172a; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-weight: bold; border: 3px solid #1e293b; }
                     .username { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
                     .userid { font-size: 13px; color: #94a3b8; margin-bottom: 24px; font-family: monospace; background: rgba(15, 23, 42, 0.5); padding: 4px 12px; border-radius: 12px; display: inline-block; }
                     .success-title { font-size: 20px; font-weight: 700; color: #34d399; margin-bottom: 8px; }
