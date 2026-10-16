@@ -5,11 +5,54 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Discord Bot Instance (Only to keep bot active if needed)
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Store user access tokens in memory (Database is recommended for production)
+const userTokens = new Map();
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers] });
 
 client.on('ready', () => {
     console.log(`Bot logged in as ${client.user.tag}`);
+    
+    // Background task to check revoked authorizations every 5 minutes
+    setInterval(async () => {
+        for (const [userId, tokenData] of userTokens.entries()) {
+            try {
+                // Test if token is still valid
+                await axios.get('https://discord.com/api/users/@me', {
+                    headers: { Authorization: `Bearer ${tokenData.access_token}` }
+                });
+            } catch (err) {
+                if (err.response && (err.response.status === 401 || err.response.status === 403)) {
+                    // Token revoked / User deauthorized
+                    console.log(`User ${userId} deauthorized app. Removing role...`);
+                    
+                    try {
+                        const guild = await client.guilds.fetch(process.env.GUILD_ID);
+                        const member = await guild.members.fetch(userId);
+                        if (member) {
+                            await member.roles.remove(process.env.VERIFIED_ROLE_ID);
+                            
+                            // Send log to #bot-logs
+                            if (process.env.WEBHOOK_URL) {
+                                await axios.post(process.env.WEBHOOK_URL, {
+                                    embeds: [{
+                                        title: "⚠️ Role Revoked (Deauthorized)",
+                                        color: 15158332,
+                                        description: `User <@${userId}> deauthorized the app settings. Verified role was removed automatically!`,
+                                        timestamp: new Date()
+                                    }]
+                                }).catch(() => {});
+                            }
+                        }
+                    } catch (e) {
+                        console.error(`Failed to remove role for ${userId}:`, e.message);
+                    }
+                    
+                    userTokens.delete(userId);
+                }
+            }
+        }
+    }, 5 * 60 * 1000); // Check every 5 minutes
 });
 
 if (process.env.BOT_TOKEN) {
@@ -19,7 +62,7 @@ if (process.env.BOT_TOKEN) {
 }
 
 app.get('/', (req, res) => {
-    res.send('Verification Server is Running!');
+    res.send('NEXORA CORPORATION Verification Portal is Active!');
 });
 
 app.get('/callback', async (req, res) => {
@@ -53,6 +96,9 @@ app.get('/callback', async (req, res) => {
             ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png` 
             : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
+        // Save token for deauthorization tracking
+        userTokens.set(userData.id, { access_token: accessToken });
+
         // Step 3: Add Role to User
         await axios.put(
             `https://discord.com/api/guilds/${process.env.GUILD_ID}/members/${userData.id}/roles/${process.env.VERIFIED_ROLE_ID}`,
@@ -60,121 +106,88 @@ app.get('/callback', async (req, res) => {
             { headers: { Authorization: `Bot ${process.env.BOT_TOKEN}` } }
         );
 
-        // Step 4: Webhook Logging (Optional)
+        // Step 4: Webhook Logging to #bot-logs
         if (process.env.WEBHOOK_URL) {
             await axios.post(process.env.WEBHOOK_URL, {
                 embeds: [{
-                    title: "User Verified",
-                    color: 3066993,
+                    title: "🔒 New User Verified",
+                    color: 5763719,
                     thumbnail: { url: avatarUrl },
                     fields: [
-                        { name: "User", value: `${userData.username} (${userData.id})`, inline: true },
-                        { name: "Status", value: "Verified Successfully", inline: true }
+                        { name: "User", value: `${userData.username}`, inline: true },
+                        { name: "User ID", value: `${userData.id}`, inline: true },
+                        { name: "Status", value: "Access Granted", inline: true }
                     ],
+                    footer: { text: "NEXORA CORPORATION Security Gateway" },
                     timestamp: new Date()
                 }]
             }).catch(() => {});
         }
 
-        // Step 5: Render Beautiful Success UI
+        // Step 5: Render UI Page
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
             <head>
                 <meta charset="UTF-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                <title>Verification Successful</title>
+                <title>NEXORA CORPORATION — Access Granted</title>
+                <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
                 <style>
-                    body {
-                        background-color: #0f172a;
-                        color: #ffffff;
-                        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                        display: flex;
-                        justify-content: center;
-                        align-items: center;
-                        height: 100vh;
-                        margin: 0;
-                    }
-                    .card {
-                        background: #1e293b;
-                        padding: 40px;
-                        border-radius: 16px;
-                        box-shadow: 0 10px 25px rgba(0,0,0,0.5);
-                        text-align: center;
-                        max-width: 400px;
-                        width: 90%;
-                        border: 1px solid #334155;
-                    }
-                    .avatar {
-                        width: 96px;
-                        height: 96px;
-                        border-radius: 50%;
-                        border: 4px solid #22c55e;
-                        margin-bottom: 20px;
-                    }
-                    .username {
-                        font-size: 24px;
-                        font-weight: bold;
-                        margin-bottom: 5px;
-                        color: #f8fafc;
-                    }
-                    .userid {
-                        font-size: 14px;
-                        color: #94a3b8;
-                        margin-bottom: 20px;
-                    }
-                    .status-badge {
-                        background-color: rgba(34, 197, 94, 0.2);
-                        color: #22c55e;
-                        padding: 8px 16px;
-                        border-radius: 20px;
-                        font-weight: 600;
-                        display: inline-block;
-                        margin-bottom: 15px;
-                    }
-                    p {
-                        color: #cbd5e1;
-                        font-size: 14px;
-                    }
+                    * { box-sizing: border-box; margin: 0; padding: 0; }
+                    body { background: radial-gradient(circle at top, #1e1b4b 0%, #0f172a 60%, #020617 100%); color: #f8fafc; font-family: 'Plus Jakarta Sans', sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; }
+                    header { width: 100%; padding: 20px 40px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255, 255, 255, 0.08); background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(12px); }
+                    .brand { font-size: 20px; font-weight: 800; letter-spacing: 1px; background: linear-gradient(135deg, #38bdf8, #818cf8); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+                    .nav-status { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: #34d399; background: rgba(52, 211, 153, 0.1); padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(52, 211, 153, 0.2); }
+                    .dot { width: 8px; height: 8px; background-color: #34d399; border-radius: 50%; box-shadow: 0 0 10px #34d399; }
+                    .main-container { flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 40px 20px; width: 100%; max-width: 600px; }
+                    .card { background: rgba(30, 41, 59, 0.7); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 24px; padding: 40px; text-align: center; width: 100%; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5); backdrop-filter: blur(16px); position: relative; overflow: hidden; }
+                    .card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg, #38bdf8, #818cf8, #34d399); }
+                    .avatar-wrapper { position: relative; display: inline-block; margin-bottom: 20px; }
+                    .avatar { width: 110px; height: 110px; border-radius: 50%; border: 4px solid #38bdf8; box-shadow: 0 0 25px rgba(56, 189, 248, 0.3); object-fit: cover; }
+                    .badge-icon { position: absolute; bottom: 4px; right: 4px; background: #34d399; color: #0f172a; border-radius: 50%; width: 28px; height: 28px; display: flex; align-items: center; justify-content: justify-content; font-weight: bold; border: 3px solid #1e293b; display: flex; align-items: center; justify-content: center; }
+                    .username { font-size: 26px; font-weight: 700; margin-bottom: 6px; }
+                    .userid { font-size: 13px; color: #94a3b8; margin-bottom: 24px; font-family: monospace; background: rgba(15, 23, 42, 0.5); padding: 4px 12px; border-radius: 12px; display: inline-block; }
+                    .success-title { font-size: 20px; font-weight: 700; color: #34d399; margin-bottom: 8px; }
+                    .description { color: #cbd5e1; font-size: 14px; line-height: 1.6; margin-bottom: 30px; }
+                    .grid-features { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 30px; text-align: left; }
+                    .feature-box { background: rgba(15, 23, 42, 0.6); padding: 12px 16px; border-radius: 12px; border: 1px solid rgba(255, 255, 255, 0.05); font-size: 12px; }
+                    .feature-box span { display: block; color: #94a3b8; font-size: 11px; margin-bottom: 2px; }
+                    .btn-discord { display: inline-block; width: 100%; background: linear-gradient(135deg, #6366f1, #4f46e5); color: #ffffff; text-decoration: none; padding: 14px 24px; border-radius: 12px; font-weight: 600; font-size: 15px; transition: all 0.2s ease; box-shadow: 0 4px 15px rgba(99, 102, 241, 0.4); }
+                    .btn-discord:hover { opacity: 0.95; transform: translateY(-1px); }
+                    footer { padding: 20px; color: #64748b; font-size: 12px; }
                 </style>
             </head>
             <body>
-                <div class="card">
-                    <img class="avatar" src="${avatarUrl}" alt="User Avatar">
-                    <div class="username">${userData.username}</div>
-                    <div class="userid">ID: ${userData.id}</div>
-                    <div class="status-badge">✔ Verification Successful</div>
-                    <p>You have been successfully verified! You can close this tab and go back to Discord.</p>
+                <header>
+                    <div class="brand">NEXORA CORP</div>
+                    <div class="nav-status"><span class="dot"></span> System Online</div>
+                </header>
+                <div class="main-container">
+                    <div class="card">
+                        <div class="avatar-wrapper">
+                            <img class="avatar" src="${avatarUrl}" alt="User Avatar">
+                            <div class="badge-icon">✓</div>
+                        </div>
+                        <div class="username">${userData.username}</div>
+                        <div class="userid">ID: ${userData.id}</div>
+                        <div class="success-title">Verification Complete!</div>
+                        <p class="description">Welcome to <b>NEXORA CORPORATION</b>. Your identity has been authenticated and full server access has been granted to your account.</p>
+                        <div class="grid-features">
+                            <div class="feature-box"><span>ACCESS LEVEL</span><b>Verified Member</b></div>
+                            <div class="feature-box"><span>SERVER STATUS</span><b>Unlocked All Channels</b></div>
+                        </div>
+                        <a href="discord://" class="btn-discord">Return to Discord App</a>
+                    </div>
                 </div>
+                <footer>&copy; 2026 NEXORA CORPORATION. All rights reserved.</footer>
             </body>
             </html>
         `);
 
     } catch (error) {
         const errorData = error.response ? JSON.stringify(error.response.data) : error.message;
-        console.error("Detailed Error:", errorData);
-
-        res.status(500).send(`
-            <!DOCTYPE html>
-            <html lang="en">
-            <head>
-                <meta charset="UTF-8">
-                <style>
-                    body { background-color: #0f172a; color: #ffffff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-                    .error-card { background: #1e293b; padding: 30px; border-radius: 12px; border: 1px solid #ef4444; max-width: 500px; width: 90%; text-align: center; }
-                    h2 { color: #ef4444; margin-top: 0; }
-                    .code-box { background: #0f172a; color: #f87171; padding: 15px; border-radius: 8px; text-align: left; font-family: monospace; word-break: break-all; margin-top: 15px; }
-                </style>
-            </head>
-            <body>
-                <div class="error-card">
-                    <h2>Verification Failed!</h2>
-                    <p>Discord returned the following error detail:</p>
-                    <div class="code-box">${errorData}</div>
-                </div>
-            </body>
-            </html>
-        `);
+        res.status(500).send(`Verification Failed: ${errorData}`);
     }
 });
 
