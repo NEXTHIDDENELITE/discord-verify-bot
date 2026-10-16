@@ -1,11 +1,21 @@
 const express = require('express');
 const axios = require('axios');
-const app = express();
+const { Client, GatewayIntentBits } = require('discord.js');
 
+const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Initialize Discord Client to keep bot Online
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+
+client.on('ready', () => {
+    console.log(`Bot logged in as ${client.user.tag} and is now ONLINE!`);
+});
+
+client.login(process.env.BOT_TOKEN).catch(err => console.error("Discord Login Error:", err));
+
 app.get('/', (req, res) => {
-    res.send('Server is running!');
+    res.send('Verification Server is Running!');
 });
 
 app.get('/callback', async (req, res) => {
@@ -46,7 +56,7 @@ app.get('/callback', async (req, res) => {
             { headers: { Authorization: `Bot ${process.env.BOT_TOKEN}` } }
         );
 
-        // Send Log to Webhook (Optional)
+        // Send Log to Webhook
         if (process.env.WEBHOOK_URL) {
             await axios.post(process.env.WEBHOOK_URL, {
                 embeds: [{
@@ -62,7 +72,7 @@ app.get('/callback', async (req, res) => {
             }).catch(() => {});
         }
 
-        // Beautiful UI Response
+        // UI Response Page
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
