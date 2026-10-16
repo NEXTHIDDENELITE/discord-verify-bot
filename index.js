@@ -5,14 +5,18 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Initialize Discord Client to keep bot Online
+// Discord Bot Instance (Only to keep bot active if needed)
 const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
 client.on('ready', () => {
-    console.log(`Bot logged in as ${client.user.tag} and is now ONLINE!`);
+    console.log(`Bot logged in as ${client.user.tag}`);
 });
 
-client.login(process.env.BOT_TOKEN).catch(err => console.error("Discord Login Error:", err));
+if (process.env.BOT_TOKEN) {
+    client.login(process.env.BOT_TOKEN).catch(err => {
+        console.error("Discord Login Error:", err.message);
+    });
+}
 
 app.get('/', (req, res) => {
     res.send('Verification Server is Running!');
@@ -22,11 +26,11 @@ app.get('/callback', async (req, res) => {
     const code = req.query.code;
 
     if (!code) {
-        return res.status(400).send('No code provided');
+        return res.status(400).send('No authorization code provided.');
     }
 
     try {
-        // Exchange Code for Access Token
+        // Step 1: Exchange Code for Access Token
         const tokenResponse = await axios.post('https://discord.com/api/oauth2/token', new URLSearchParams({
             client_id: process.env.CLIENT_ID,
             client_secret: process.env.CLIENT_SECRET,
@@ -39,7 +43,7 @@ app.get('/callback', async (req, res) => {
 
         const accessToken = tokenResponse.data.access_token;
 
-        // Fetch User Info
+        // Step 2: Fetch User Info
         const userResponse = await axios.get('https://discord.com/api/users/@me', {
             headers: { Authorization: `Bearer ${accessToken}` }
         });
@@ -49,14 +53,14 @@ app.get('/callback', async (req, res) => {
             ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png` 
             : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
-        // Add Role to User
+        // Step 3: Add Role to User
         await axios.put(
             `https://discord.com/api/guilds/${process.env.GUILD_ID}/members/${userData.id}/roles/${process.env.VERIFIED_ROLE_ID}`,
             {},
             { headers: { Authorization: `Bot ${process.env.BOT_TOKEN}` } }
         );
 
-        // Send Log to Webhook
+        // Step 4: Webhook Logging (Optional)
         if (process.env.WEBHOOK_URL) {
             await axios.post(process.env.WEBHOOK_URL, {
                 embeds: [{
@@ -72,7 +76,7 @@ app.get('/callback', async (req, res) => {
             }).catch(() => {});
         }
 
-        // UI Response Page
+        // Step 5: Render Beautiful Success UI
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
@@ -147,15 +151,33 @@ app.get('/callback', async (req, res) => {
         `);
 
     } catch (error) {
-        console.error(error.response ? error.response.data : error.message);
+        const errorData = error.response ? JSON.stringify(error.response.data) : error.message;
+        console.error("Detailed Error:", errorData);
+
         res.status(500).send(`
-            <h2 style="color: red; text-align: center; font-family: sans-serif; margin-top: 50px;">
-                Verification Failed! Please try again or check Bot Permissions.
-            </h2>
+            <!DOCTYPE html>
+            <html lang="en">
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    body { background-color: #0f172a; color: #ffffff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+                    .error-card { background: #1e293b; padding: 30px; border-radius: 12px; border: 1px solid #ef4444; max-width: 500px; width: 90%; text-align: center; }
+                    h2 { color: #ef4444; margin-top: 0; }
+                    .code-box { background: #0f172a; color: #f87171; padding: 15px; border-radius: 8px; text-align: left; font-family: monospace; word-break: break-all; margin-top: 15px; }
+                </style>
+            </head>
+            <body>
+                <div class="error-card">
+                    <h2>Verification Failed!</h2>
+                    <p>Discord returned the following error detail:</p>
+                    <div class="code-box">${errorData}</div>
+                </div>
+            </body>
+            </html>
         `);
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
