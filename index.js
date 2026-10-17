@@ -5,9 +5,6 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Memory storage for user access tokens
-const userTokens = new Map();
-
 // Discord Bot Instance
 const client = new Client({ 
     intents: [
@@ -18,36 +15,6 @@ const client = new Client({
 
 client.on('ready', () => {
     console.log(`Bot logged in as ${client.user.tag}`);
-    
-    // Periodically check every 10 minutes for deauthorized users
-    setInterval(async () => {
-        if (userTokens.size === 0) return;
-
-        for (const [userId, tokenData] of userTokens.entries()) {
-            try {
-                // Test if access token is still valid
-                await axios.get('https://discord.com/api/users/@me', {
-                    headers: { Authorization: `Bearer ${tokenData.access_token}` }
-                });
-            } catch (err) {
-                // Token invalid or revoked by user in settings
-                if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-                    console.log(`User ${userId} deauthorized the app. Removing role...`);
-                    try {
-                        const guild = await client.guilds.fetch(process.env.GUILD_ID);
-                        const member = await guild.members.fetch(userId);
-                        if (member && member.roles.cache.has(process.env.VERIFIED_ROLE_ID)) {
-                            await member.roles.remove(process.env.VERIFIED_ROLE_ID);
-                            console.log(`Successfully removed role from user ${userId}`);
-                        }
-                    } catch (e) {
-                        console.error(`Could not remove role for ${userId}:`, e.message);
-                    }
-                    userTokens.delete(userId);
-                }
-            }
-        }
-    }, 10 * 60 * 1000); // 10 minutes interval
 });
 
 if (process.env.BOT_TOKEN) {
@@ -90,9 +57,6 @@ app.get('/callback', async (req, res) => {
         const avatarUrl = userData.avatar 
             ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png` 
             : 'https://cdn.discordapp.com/embed/avatars/0.png';
-
-        // Save token to monitor deauthorization
-        userTokens.set(userData.id, { access_token: accessToken });
 
         // Step 3: Add Verified Role to User
         await axios.put(
