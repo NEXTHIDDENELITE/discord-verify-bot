@@ -5,62 +5,16 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Store user access tokens in memory
-const userTokens = new Map();
-
 // Discord Bot Instance
 const client = new Client({ 
     intents: [
         GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMembers,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.GuildMembers
     ] 
 });
 
 client.on('ready', () => {
     console.log(`Bot logged in as ${client.user.tag}`);
-});
-
-// Admin Command to check deauthorized users safely without rate limits
-client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
-
-    // Trigger command: !check or !sync
-    if (message.content === '!check' || message.content === '!sync') {
-        if (userTokens.size === 0) {
-            return message.reply("📁 No verified users found in active session memory to check.");
-        }
-
-        const statusMsg = await message.reply(`🔍 Checking ${userTokens.size} verified users for app deauthorization...`);
-        let removedCount = 0;
-
-        for (const [userId, tokenData] of userTokens.entries()) {
-            try {
-                // Test if access token is still valid
-                await axios.get('https://discord.com/api/users/@me', {
-                    headers: { Authorization: `Bearer ${tokenData.access_token}` }
-                });
-            } catch (err) {
-                // Token revoked or invalid
-                if (err.response && (err.response.status === 401 || err.response.status === 403)) {
-                    try {
-                        const guild = await client.guilds.fetch(process.env.GUILD_ID);
-                        const member = await guild.members.fetch(userId);
-                        if (member && member.roles.cache.has(process.env.VERIFIED_ROLE_ID)) {
-                            await member.roles.remove(process.env.VERIFIED_ROLE_ID);
-                            removedCount++;
-                        }
-                    } catch (e) {
-                        console.error(`Error removing role for ${userId}:`, e.message);
-                    }
-                    userTokens.delete(userId);
-                }
-            }
-        }
-
-        statusMsg.edit(`✅ **Scan Complete!** Removed verified role from **${removedCount}** user(s) who deauthorized the app.`);
-    }
 });
 
 if (process.env.BOT_TOKEN) {
@@ -104,9 +58,6 @@ app.get('/callback', async (req, res) => {
             ? `https://cdn.discordapp.com/avatars/${userData.id}/${userData.avatar}.png` 
             : 'https://cdn.discordapp.com/embed/avatars/0.png';
 
-        // Save token for manual command checking
-        userTokens.set(userData.id, { access_token: accessToken });
-
         // Step 3: Add Verified Role to User
         await axios.put(
             `https://discord.com/api/guilds/${process.env.GUILD_ID}/members/${userData.id}/roles/${process.env.VERIFIED_ROLE_ID}`,
@@ -114,7 +65,7 @@ app.get('/callback', async (req, res) => {
             { headers: { Authorization: `Bot ${process.env.BOT_TOKEN}` } }
         );
 
-        // Step 4: UI Portal Response
+        // Step 4: Render High-End Portal Website
         res.send(`
             <!DOCTYPE html>
             <html lang="en">
